@@ -259,17 +259,6 @@ After running, you'll get:
 - More components: Capture fine phase distinctions
 - Fewer components: Coarser segmentation
 
-## Citation
-
-If using the dataset:
-```bibtex
-@misc{metaldam2024,
-  title={MetalDAM: Metallography Dataset from Additive Manufacturing},
-  author={{ArcelorMittal} and {DaSCI Andalusian Research Institute}},
-  year={2024},
-  url={https://github.com/ari-dasci/OD-MetalDAM}
-}
-```
 
 ## License
 
