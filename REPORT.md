@@ -1,1109 +1,144 @@
-# 🔬 COMPLETE DEEP-DIVE: NMF-Based Microstructure Segmentation Project
+Alright, let's break down this NMF-based microstructure segmentation project. Imagine you're just starting your first year at university, and we're looking at a cool project that uses math and computers to understand materials.
 
-## **PROJECT OVERVIEW**
+**Project Goal: Splitting Up Materials**
 
-This project applies **Constrained Non-Negative Matrix Factorization (NMF)** to segment metallographic microstructure images (SEM micrographs) into distinct metallurgical phases. This is an **unsupervised learning** approach for materials science image analysis.
+You know how different parts of a cookie (chocolate chips, dough, nuts) look different? In materials science, metal samples often have different "phases" – like different types of crystals or structures mixed together. These phases have different properties and affect how strong or flexible the metal is.
 
----
-
-## **📊 PART 1: THEORETICAL FOUNDATIONS**
-
-### **1.1 What is Non-Negative Matrix Factorization (NMF)?**
-
-#### **Mathematical Definition:**
-Given a non-negative matrix $V \in \mathbb{R}^{m \times n}_+$ where all entries $V_{ij} \geq 0$, NMF decomposes it into two non-negative matrices:
-
-$$V \approx W H$$
-
-Where:
-- $V$: Original data matrix (m × n)
-- $W$: Basis matrix (m × k) - "component activations" or "weights"
-- $H$: Coefficient matrix (k × n) - "component features" or "dictionary"
-- $k$: Number of components (k << min(m,n))
-
-#### **Why NMF for Images?**
-
-**Key theoretical advantages:**
-
-1. **Parts-based representation**: Unlike PCA (which can have negative values), NMF enforces non-negativity, leading to **additive** combinations. This matches physical reality - pixel intensity is additive combinations of different material phases.
-
-2. **Interpretability**: Components are interpretable as distinct "objects" or "parts". In metallurgy, these correspond to actual phases (austenite, martensite, etc.)
-
-3. **Sparsity**: With constraints, NMF produces sparse representations where each pixel is explained by few components - matches reality where a spatial location typically belongs to ONE phase.
+Your project aims to automatically *segment* (which means "split up" or "identify") these different phases in images of metal, specifically using a technique called Non-Negative Matrix Factorization (NMF). It's like asking the computer to find the chocolate chips, the dough, and the nuts in the cookie image without you having to point them out beforehand. This is called **unsupervised learning** because you don't give the computer examples of "this is a chocolate chip, this is dough." It figures it out on its own.
 
 ---
 
-### **1.2 NMF Optimization Problem**
+### Part 1: The Fancy Math Behind It (Theoretical Foundations)
 
-#### **Objective Function:**
+#### 1.1 What is NMF? (Non-Negative Matrix Factorization)
 
-$$\min_{W,H \geq 0} \frac{1}{2} ||V - WH||_F^2 + \alpha_W ||W||_1 + \alpha_H ||H||_1$$
+Imagine you have a big spreadsheet of numbers (`V`). NMF is a way to break that big spreadsheet into two smaller spreadsheets (`W` and `H`) that, when multiplied together, get you close to the original big spreadsheet.
 
-**Breaking this down:**
+* **`V` (Your Data):** This is your image, but flattened into a giant row of numbers. Each number is a pixel's brightness.
+* **`W` (Components' Presence):** This spreadsheet tells you *how much* of each "thing" (or "phase" in your case) is present at each pixel.
+* **`H` (Components' Identity):** This spreadsheet defines *what* each "thing" (phase) looks like. For example, one row might describe a "bright, smooth phase," and another a "dark, bumpy phase."
+* **`k` (Number of Things):** You get to choose how many "things" (phases) you want NMF to find.
 
-1. **Frobenius Norm** $||V - WH||_F^2 = \sum_{i,j} (V_{ij} - (WH)_{ij})^2$
-   - Measures reconstruction error
-   - Penalizes difference between original and reconstructed data
-   - Squared error is differentiable and convex in W (when H fixed) and vice versa
+**The "Non-Negative" part is super important:** All numbers in `V`, `W`, and `H` must be zero or positive. Why? Because pixel brightness can't be negative, and you can't have "negative" amounts of a material phase! This makes the results very intuitive.
 
-2. **L1 Regularization** $||W||_1 = \sum_{i,j} |W_{ij}|$
-   - $\alpha_W, \alpha_H$: Sparsity parameters
-   - Promotes sparsity (many zeros in W and H)
-   - **Physical interpretation**: Each pixel should be dominated by few phases
-   - Higher α → sparser solution → more distinct phases
+**Why is it good for images?**
+Imagine you're mixing paints. NMF is like saying: "This shade of green is 70% blue paint + 30% yellow paint." It's an *additive* way of thinking. For images, a pixel's brightness is an additive combination of the different material phases present there.
 
-3. **Non-negativity constraints** $W, H \geq 0$
-   - Enforced via **multiplicative update rules**
-   - Ensures physically meaningful solutions (can't have negative intensity)
+#### 1.2 NMF's Goal: Minimize the "Oops" Factor (Optimization Problem)
 
----
+NMF tries to find `W` and `H` such that when `W` and `H` are multiplied, the result (`WH`) is as close as possible to the original data (`V`). "Close as possible" is measured by something called the **Frobenius Norm**, which basically calculates the sum of the squared differences between every number in `V` and every number in `WH`. The smaller this number, the better the fit.
 
-### **1.3 Multiplicative Update Rules (Lee & Seung 1999)**
+But you also want the results to be "clean." You don't want every pixel to be a tiny bit of every phase. You want each pixel to be mostly *one* phase. This is where **L1 Regularization** comes in – it encourages `W` and `H` to have lots of zeros, making them "sparse." Think of it as a penalty for being too spread out. If a pixel is mostly Martensite, you want its `W` value for Martensite to be high, and for all other phases to be almost zero.
 
-The classic algorithm to solve NMF:
+#### 1.3 How NMF "Learns": Multiplicative Update Rules
 
-$$W_{ik} \leftarrow W_{ik} \frac{(VH^T)_{ik}}{(WHH^T)_{ik} + \alpha_W}$$
+NMF doesn't just magically split `V`. It's an iterative process, like training a model. It starts with a guess for `W` and `H`, then repeatedly tweaks them using these "multiplicative update rules." These rules are like tiny instructions that guarantee two things:
+1.  **Non-negativity:** The numbers in `W` and `H` will always stay positive.
+2.  **Improvement:** Each tweak makes the "Oops" factor (reconstruction error) smaller.
+It keeps doing this until the "Oops" factor stops shrinking much, or it hits a maximum number of tries.
 
-$$H_{kj} \leftarrow H_{kj} \frac{(W^TV)_{kj}}{(W^TWH)_{kj} + \alpha_H}$$
+#### 1.4 Different Ways to Measure "Oops": Beta-Divergence
 
-**Why these rules work:**
-
-1. **Guaranteed non-negativity**: If $W, H \geq 0$ initially, they remain non-negative
-2. **Monotonic convergence**: Cost function decreases with each update
-3. **Converges to local minimum**: Not global (NP-hard problem)
-
-**In the code (`config.py`):**
-```python
-'solver': 'cd',              # Coordinate Descent (faster than multiplicative update 'mu')
-'beta_loss': 'frobenius',    # Frobenius norm (standard for images)
-```
-
-**Coordinate Descent (CD)** is faster than multiplicative updates (MU) for sparse problems - it updates one variable at a time while fixing others.
+The "Oops" factor (or "loss function") can be calculated in different ways. Your project uses the **Frobenius norm** (which is `beta=2`). This is a good choice for your SEM images because they usually have a type of noise that works well with this particular mathematical measurement. Other beta values are for different types of data or noise.
 
 ---
 
-### **1.4 Beta-Divergence Loss Functions**
+### Part 2: The Step-by-Step Computer Plan (Code Architecture & Pipeline)
 
-The config allows different loss functions via `beta_loss`:
+Imagine your project is a factory assembly line:
 
-$$D_\beta(V||WH) = \sum_{ij} \frac{1}{\beta(\beta-1)}[V_{ij}^\beta + (\beta-1)(WH)_{ij}^\beta - \beta V_{ij}(WH)_{ij}^{\beta-1}]$$
+#### 2.1 Overall Pipeline Flow
 
-**Special cases:**
-- $\beta = 2$: **Frobenius norm** (default) - Gaussian noise model
-- $\beta = 1$: **Kullback-Leibler divergence** - Poisson noise (good for photon counting)
-- $\beta = 0$: **Itakura-Saito divergence** - Scale-invariant
+1.  **Load Data:** Get the metal images from a special dataset.
+2.  **Preprocess:** Clean up the images so the computer can understand them (like cropping, enhancing contrast).
+3.  **Extract Features:** Turn each pixel into a set of descriptive numbers (not just brightness, but also how "edgy" or "bumpy" it is). This is crucial!
+4.  **Train NMF:** Teach NMF what the different phases "look like" using many images.
+5.  **Transform & Segment:** Take a *new* image, apply the learned "phase looks" to it, and color-code each pixel based on which phase it belongs to.
 
-**Why Frobenius for SEM images?**
-- SEM images have approximately Gaussian additive noise
-- Computationally efficient
-- Well-studied convergence properties
+#### 2.2 STEP 1: Dataset Loading
 
----
+You're using a dataset called **OD_MetalDAM**, which has 42 images of steel. These images show 5 different metallurgical phases (like different types of crystal structures). This is a great real-world dataset because it's complex and realistic.
 
-## **📁 PART 2: CODE ARCHITECTURE & PIPELINE**
+#### 2.3 STEP 2: Image Preprocessing
 
-### **2.1 Overall Pipeline Flow**
+Before NMF can work, images need to be prepared:
+* **Grayscale Conversion:** SEM images are already shades of gray, so you just make sure the computer treats them that way (one channel instead of color).
+* **Resizing to (512, 512):** You make all images the same size (512x512 pixels). This is a standard size that balances detail with how much computational power you need.
+* **Normalization to [0, 1]:** All pixel brightness values are scaled to be between 0 and 1. This helps NMF work better because all numbers are in a consistent range.
+* **CLAHE Enhancement:** This is a fancy way to improve the contrast in the image. SEM images can sometimes look a bit flat. CLAHE makes the important details (like grain boundaries) stand out more clearly, but it does so smartly so it doesn't just make noise look super bright.
 
-```
-1. Dataset Loading (load_dataset.py)
-   ↓
-2. Image Preprocessing (utils/preprocessing.py)
-   ↓
-3. Feature Extraction (utils/preprocessing.py)
-   ↓
-4. NMF Training (microstructure_segmentation.py)
-   ↓
-5. Transformation & Segmentation
-   ↓
-6. Visualization (utils/visualization.py)
-```
+#### 2.4 STEP 3: Feature Extraction (THE BRAIN OF THE OPERATION)
 
----
+This is where you go beyond just pixel brightness. For each pixel, you create a "feature vector" – a small list of numbers that describe different aspects of that pixel's local area. This is how the computer "sees" the difference between a smooth phase and a textured one.
 
-### **2.2 STEP 1: Dataset Loading (`load_dataset.py`)**
+You extract 6 features:
+1.  **Raw Intensity:** Just the pixel's brightness.
+2.  **Gradient Magnitude:** How quickly the brightness changes. This is high at *edges* or *boundaries* between phases.
+3.  **Laplacian:** How quickly the *gradient* changes. This helps find sharper edges, corners, or small particles.
+4.  **Local Variance:** How much the brightness varies in a small area around the pixel. This tells you about *texture* – is it smooth or bumpy?
+5.  **Multi-scale Gaussian Blur (2 features):** You blur the image slightly at two different "scales" (like looking at it slightly out of focus, or even more out of focus). This helps NMF understand both small details and larger regions.
 
-```python
-dataset = load_dataset("Voxel51/OD_MetalDAM")
-```
+You combine these 6 features for *every* pixel. So if your image is 512x512, you'll have 262,144 pixels, and each pixel will have 6 features. This creates a big "feature matrix" (your `V` matrix for NMF).
 
-**OD_MetalDAM Dataset:**
-- **42 SEM micrographs** of steel microstructures
-- **5 phases**: Matrix, Austenite, Martensite/Austenite, Precipitate, Defects
-- High resolution: 1024×703 to 1280×895 pixels
-- From HuggingFace Datasets (originally Voxel51)
+#### 2.5 STEP 4: NMF Training
 
-**Why this dataset?**
-- Realistic metallurgical samples
-- Multiple phases (requires multi-component segmentation)
-- Challenging boundaries (not trivial thresholding)
+Now you feed all those feature matrices (from multiple images!) into the NMF algorithm.
+* **Why multiple images?** You want NMF to learn what "Martensite" looks like *in general*, not just what it looks like in one specific image. By training on many images, `H` learns general "fingerprints" for each phase.
+* **Initialization:** NMF needs a starting guess for `W` and `H`. You use a smart method called NNDSVD which often gives better starting points than just random numbers.
+* **The NMF Fitting:** This is where the iterative update rules (from Part 1.3) run. They tweak `W` and `H` until the reconstruction error is minimized.
+* **The `H` Matrix:** This is your most important output. It contains the "fingerprints" of each of the `k` phases you asked for. Each row of `H` describes one phase based on its 6 features. E.g., Phase 1 might have high intensity, low gradient, low variance (bright, smooth). Phase 2 might have low intensity, high gradient, high variance (dark, textured).
 
----
+#### 2.6 STEP 5: Segmenting New Images
 
-### **2.3 STEP 2: Image Preprocessing (`utils/preprocessing.py`)**
+Once NMF is trained and you have your `H` matrix (the phase definitions), you can use it to segment *new* images you've never seen before:
+1.  **Transform:** For a new image, you extract its features (just like in Step 3). Then, keeping your learned `H` fixed, you find the *new* `W` matrix that best explains this new image's features using your known phases (`H`).
+2.  **Segmentation:** For each pixel, you look at its row in the new `W` matrix. Whichever phase component has the highest value in `W` for that pixel, that's the phase you assign to that pixel. You then color-code the image to show which phase each pixel belongs to.
 
-#### **Function: `load_and_preprocess_image()`**
+#### 2.7 Advanced NMF (for the ambitious!)
 
-```python
-def load_and_preprocess_image(image_path, target_size=None, apply_clahe=True):
-```
-
-**Operations:**
-
-1. **Grayscale Conversion**
-   ```python
-   image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-   ```
-   - SEM images are inherently grayscale (electron intensity)
-   - Reduces dimensionality (1 channel vs 3)
-
-2. **Resizing to (512, 512)**
-   ```python
-   image = cv2.resize(image, (target_size[1], target_size[0]))
-   ```
-   - **Why 512?** 
-     - Power of 2 (efficient for GPU/memory)
-     - Balances detail vs computational cost
-     - ~260k pixels (manageable for NMF)
-
-3. **Normalization to [0, 1]**
-   ```python
-   image = image.astype(np.float32) / 255.0
-   ```
-   - NMF requires non-negative inputs
-   - Standardizes dynamic range
-   - Improves numerical stability
-
-4. **CLAHE Enhancement**
-   ```python
-   clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-   ```
-   
-   **CLAHE (Contrast Limited Adaptive Histogram Equalization):**
-   
-   - **Adaptive**: Operates on small tiles (8×8), not globally
-   - **Contrast Limited**: `clipLimit=2.0` prevents over-amplification of noise
-   - **Why for metallography?**
-     - SEM images often have poor contrast
-     - Grain boundaries become more visible
-     - Preserves local structure better than global equalization
-   
-   **Mathematical Intuition:**
-   - Computes histogram for each tile
-   - Clips histogram at threshold to limit noise amplification
-   - Interpolates between tiles for smooth transitions
+* **Spatially Constrained NMF:** Standard NMF treats every pixel independently. But in real images, neighboring pixels are usually part of the *same* phase. This variant adds a penalty for choppy, non-smooth segments, encouraging NMF to create more coherent regions.
+* **Orthogonal NMF:** Sometimes, NMF components can "overlap" a bit in what they describe. Orthogonal NMF adds a constraint to make the phase descriptions (`H` matrix rows) as distinct and non-overlapping as possible. This is good when you expect very clear, unique identities for each phase.
 
 ---
 
-### **2.4 STEP 3: Feature Extraction (`extract_features()`)**
+### Part 3: Adjusting the Knobs (Hyperparameter Deep Dive)
 
-This is **CRITICAL** - transforms raw pixels into discriminative features for NMF.
+These are the settings you tweak to make NMF work best:
 
-```python
-def extract_features(image, use_texture=True):
-```
-
-#### **Features Extracted:**
-
-1. **Raw Intensity** (1 feature)
-   ```python
-   features_list.append(image.flatten())
-   ```
-   - Base pixel brightness
-   - Distinguishes bright/dark phases
-
-2. **Gradient Magnitude** (1 feature)
-   ```python
-   grad_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
-   grad_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
-   grad_mag = np.sqrt(grad_x**2 + grad_y**2)
-   ```
-   
-   **Theory:**
-   - Sobel operator approximates first derivative
-   - Detects **edges/boundaries** between phases
-   - Magnitude: $|\nabla I| = \sqrt{(\frac{\partial I}{\partial x})^2 + (\frac{\partial I}{\partial y})^2}$
-   
-   **Why important?**
-   - Phase boundaries have high gradients
-   - Helps distinguish interfaces from bulk phases
-
-3. **Laplacian** (1 feature)
-   ```python
-   laplacian = cv2.Laplacian(image, cv2.CV_64F)
-   ```
-   
-   **Theory:**
-   - Second derivative: $\nabla^2 I = \frac{\partial^2 I}{\partial x^2} + \frac{\partial^2 I}{\partial y^2}$
-   - Detects **edges** (zero-crossings) and **corners**
-   - Sensitive to fine details and defects
-   
-   **Metallurgical relevance:**
-   - Precipitates create sharp second-order features
-   - Defects (voids, cracks) have distinctive Laplacian response
-
-4. **Local Variance** (1 feature)
-   ```python
-   kernel_size = 5
-   mean_img = cv2.blur(image, (kernel_size, kernel_size))
-   mean_sq = cv2.blur(image**2, (kernel_size, kernel_size))
-   variance = mean_sq - mean_img**2
-   ```
-   
-   **Theory:**
-   - Variance: $\sigma^2 = E[I^2] - E[I]^2$
-   - Measures **local texture roughness**
-   
-   **Why for microstructures?**
-   - Different phases have different texture (grain structure)
-   - Austenite vs Martensite have distinct texture patterns
-   - Smooth phases (matrix) vs rough phases (precipitates)
-
-5. **Multi-scale Gaussian Blur** (2 features)
-   ```python
-   blur1 = cv2.GaussianBlur(image, (3,3), 0)
-   blur2 = cv2.GaussianBlur(image, (7,7), 0)
-   ```
-   
-   **Theory:**
-   - Gaussian filter: $G_\sigma = \frac{1}{2\pi\sigma^2} e^{-\frac{x^2+y^2}{2\sigma^2}}$
-   - Approximates image at different **spatial scales**
-   
-   **Multi-scale importance:**
-   - Fine features (3×3): captures small precipitates
-   - Coarse features (7×7): captures large phase regions
-   - **Scale-space theory**: Features exist at multiple scales
-
-#### **Feature Matrix Shape:**
-
-```python
-features = np.vstack(features_list).T  # Shape: (n_pixels, n_features)
-```
-
-For 512×512 image with texture:
-- **n_pixels** = 512 × 512 = **262,144**
-- **n_features** = 6 (intensity, gradient, Laplacian, variance, 2× blur)
-- **Final matrix**: **262,144 × 6**
-
-#### **Feature Normalization:**
-
-```python
-f_min = features.min(axis=0, keepdims=True)
-f_max = features.max(axis=0, keepdims=True)
-features = (features - f_min) / (f_max - f_min + 1e-10)
-features = np.maximum(features, 1e-10)
-```
-
-**Why normalize each feature independently?**
-- Different features have different scales (intensity: 0-1, gradient: 0-high)
-- NMF is sensitive to scale
-- Min-max to [0,1] ensures equal contribution
-- Adding ε=1e-10 ensures strict positivity (NMF requirement)
+* **`n_components` (`k`):** This is the number of phases you want NMF to find. You pick this based on how many phases you *expect* to see in the material. Too few, and NMF merges phases; too many, and it splits one phase into multiple, confusing ones.
+* **`sparsity` (`alpha_W`, `alpha_H`):** This controls how "sparse" your `W` and `H` matrices are (how many zeros they have). Higher sparsity means each pixel is explained by fewer phases, leading to cleaner, more distinct segments.
+* **`l1_ratio`:** If you want some sparsity (L1) but also some smoothness (L2), you can mix them. `l1_ratio = 0.5` means a balanced mix.
+* **`max_iter`:** How many times NMF should try to update `W` and `H`. Too few, and it doesn't learn enough; too many, and you're just wasting computer time.
+* **`solver` ('cd' vs 'mu'):** The method NMF uses to update `W` and `H`. 'cd' (Coordinate Descent) is faster for problems where you want sparse solutions, which is your case.
+* **`beta_loss`:** We discussed this – `Frobenius` (beta=2) is good for your type of image noise.
+* **`tol` (Tolerance):** How small the improvement in the "Oops" factor needs to be before NMF decides it's "converged" and stops.
 
 ---
 
-### **2.5 STEP 4: NMF Training (`MicrostructureSegmenter.train()`)**
+### Part 4: Seeing the Results (Visualization & Interpretation)
 
-#### **Training Process:**
-
-```python
-def train(self, image_paths, target_size=(512,512), use_texture=True, verbose=True):
-```
-
-**4.1 Feature Aggregation:**
-```python
-training_features = []
-for img_path in image_paths:
-    image = load_and_preprocess_image(img_path, target_size)
-    features = extract_features(image, use_texture)
-    training_features.append(features)
-
-X_train = np.vstack(training_features)
-```
-
-**Result:** If training on 10 images:
-- X_train shape: **(2,621,440 × 6)** = (10 × 262,144) × 6
-- This is your **V matrix** in NMF
-
-**Why multiple images?**
-- Learn **shared** phase representations across samples
-- More robust H matrix (component dictionary)
-- Better generalization to new images
-
-**4.2 Initialization Strategy:**
-```python
-init_method = 'random' if self.n_components >= 5 else 'nndsvda'
-```
-
-**Initialization Methods:**
-
-- **NNDSVD** (Non-Negative Double Singular Value Decomposition):
-  ```
-  V ≈ U Σ V^T  (SVD)
-  W = |U| √Σ,  H = √Σ |V^T|
-  ```
-  - Deterministic initialization
-  - Better than random for small k
-  - Faster convergence
-  
-- **Random**:
-  - Used when k is large (k≥5)
-  - Avoids rank-deficiency issues
-  - More exploration of solution space
-
-**4.3 The Core NMF Fitting:**
-```python
-self.W = self.model.fit_transform(X_train)
-self.H = self.model.components_
-```
-
-**What happens inside sklearn's NMF:**
-
-For `solver='cd'` (Coordinate Descent):
-
-1. **Initialize** W, H using NNDSVD/random
-2. **Repeat** until convergence:
-   ```
-   For each component k:
-       Fix all except W[:,k], update via least squares
-       Fix all except H[k,:], update via least squares
-       Project to non-negative orthant
-   ```
-3. **Check convergence**: $||V - WH||_F < \text{tol}$
-
-**Output matrices:**
-- **W** (2,621,440 × k): Activation of each component at each pixel (across all training images)
-- **H** (k × 6): Feature representation of each component
-
-**Example H matrix (k=3 components):**
-```
-          [intensity, gradient, laplacian, variance, blur1, blur2]
-Phase 1:  [0.8,       0.1,      0.05,      0.02,     0.7,   0.9  ]  ← Smooth bright phase
-Phase 2:  [0.3,       0.9,      0.7,       0.8,      0.4,   0.3  ]  ← Textured edge phase
-Phase 3:  [0.1,       0.05,     0.02,      0.01,     0.2,   0.15 ]  ← Dark smooth phase
-```
-
-**Interpretation:**
-- **H matrix rows** = "fingerprints" of each phase
-- Each phase has characteristic feature combination
-- This is learned from data, not pre-specified!
-
-**4.4 Numerical Stability Checks:**
-```python
-if np.all(self.W < 1e-10):
-    print("ERROR: W matrix is all zeros!")
-    self.model.init = 'random'
-    self.W = self.model.fit_transform(X_train)
-```
-
-**Why this matters:**
-- Poor initialization can lead to degenerate solutions (all zeros)
-- Random reinit provides escape from bad local minima
-- Critical for reproducibility
-
-**4.5 H Matrix Normalization:**
-```python
-H_norms = np.linalg.norm(self.H, axis=1, keepdims=True) + 1e-10
-self.H = self.H / H_norms
-```
-
-**Why normalize H?**
-- Prevents numerical overflow in W
-- Makes components comparable in magnitude
-- Standard practice in NMF literature (Hoyer 2004)
+* **Colorized Segmentation Map:** This is your final segmented image, where each phase is assigned a different color. You can visually check if the computer correctly identified the different parts of the metal.
+* **Component Activation Maps:** For each learned phase, you can generate a grayscale map showing *how strongly* that phase is present at each pixel. Bright yellow means "very much this phase," dark blue means "not this phase." This helps you understand *what* each NMF component actually represents.
 
 ---
 
-### **2.6 STEP 5: Transform & Segment New Images**
+### Part 5: Real-World Considerations (Practical Considerations)
 
-#### **5.1 Transform (`transform_features()`)**
-
-```python
-def transform_features(self, X, max_iter=200):
-```
-
-**Problem:** Given new image with features X, and learned H, find W such that:
-$$\min_{W \geq 0} ||X - WH||_F^2$$
-
-**Solution:** Fix H, optimize W using multiplicative updates:
-
-```python
-for iteration in range(max_iter):
-    numerator = X @ H.T
-    denominator = W @ (H @ H.T) + 1e-10
-    W = W * (numerator / denominator)
-    W = np.maximum(W, 1e-10)
-```
-
-**Derivation of update rule:**
-
-Taking derivative of loss w.r.t. W and setting to zero:
-$$\frac{\partial}{\partial W}||X - WH||_F^2 = -2XH^T + 2WHH^T = 0$$
-
-Multiplicative form ensures non-negativity:
-$$W \leftarrow W \cdot \frac{XH^T}{WHH^T}$$
-
-**Output:** W_new (262,144 × k) for the new image
-
-#### **5.2 Segmentation**
-
-```python
-W_sum = W_new.sum(axis=1, keepdims=True) + 1e-10
-W_normalized = W_new / W_sum
-segmentation = np.argmax(W_normalized, axis=1).reshape(image.shape)
-```
-
-**Steps:**
-
-1. **Normalize W across components:**
-   - Each row sums to 1
-   - Converts to **probabilities**: $P(\text{phase}_k|\text{pixel}_i)$
-   - Softmax-like normalization
-
-2. **Winner-take-all assignment:**
-   ```python
-   segmentation = np.argmax(W_normalized, axis=1)
-   ```
-   - Assign pixel to component with highest activation
-   - **Hard segmentation** (vs soft/probabilistic)
-   
-3. **Reshape to image:**
-   ```python
-   segmentation.reshape(512, 512)
-   ```
-   - Convert from 1D vector back to 2D image
-
-**Result:** Segmentation map where each pixel ∈ {0, 1, ..., k-1}
+* **Why train on multiple images?** To learn general phase definitions, not just definitions specific to one image. This makes your system more useful.
+* **Computational Complexity:** NMF is quite fast for your image size and number of phases, especially with the 'cd' solver. It won't take hours like some deep learning models.
+* **What if it goes wrong? (Failure Modes):** NMF can sometimes produce bad results (e.g., everything classified as one phase, or very noisy segments). The document describes common causes and fixes.
+* **How do you know it's good? (Validation):** Since you don't have human-labeled ground truth, you rely on:
+    * **Visual inspection:** Do the segmented phases actually make sense to a human expert?
+    * **Reconstruction error:** Is the "Oops" factor low?
+    * **Interpretability:** Can you give a meaningful name to each learned phase based on its features?
 
 ---
 
-### **2.7 ADVANCED NMF VARIANTS (`utils/advanced_models.py`)**
+### Part 6: How it Stacks Up (Comparison with Other Methods)
 
-#### **7.1 Spatially Constrained NMF**
-
-**Motivation:** Standard NMF ignores spatial relationships between pixels. Real microstructures have **spatial coherence** - neighboring pixels likely belong to same phase.
-
-**Modified Objective:**
-$$\min_{W,H} ||V - WH||_F^2 + \lambda \sum_k ||\nabla W_k||_2^2$$
-
-Where $W_k$ is the k-th component reshaped as 2D image.
-
-**Implementation:**
-```python
-def _spatial_smoothness_penalty(self, W):
-    for k in range(n_components):
-        component_map = W[:, k].reshape(h, w)
-        smoothed = gaussian_filter(component_map, sigma=1.0)
-        laplacian = component_map - smoothed
-        penalty[:, k] = laplacian.flatten()
-    return smoothness * penalty
-```
-
-**Theory:**
-- Gaussian smoothing approximates low-pass filter
-- Laplacian (difference from smoothed) measures high-frequency content
-- Penalizing Laplacian encourages smooth spatial regions
-
-**When to use:**
-- Images with large homogeneous regions
-- Want to reduce salt-and-pepper noise
-- Materials with expected spatial continuity
-
-#### **7.2 Orthogonal NMF**
-
-**Motivation:** Standard NMF allows overlapping components. For distinct phases, we want **orthogonal** components (non-overlapping).
-
-**Modified Objective:**
-$$\min_{W,H} ||V - WH||_F^2 + \gamma ||HH^T - I||_F^2$$
-
-**Orthogonality constraint:** $H_i \cdot H_j = 0$ for $i \neq j$
-
-**Implementation:**
-```python
-def _orthogonality_constraint(self, H):
-    HHT = H @ H.T
-    identity = np.eye(n_components)
-    return orthogonality_penalty * (HHT - identity) @ H
-```
-
-**Update rule becomes:**
-$$H \leftarrow H \cdot \frac{W^TV}{W^TWH + \gamma(HH^T - I)H}$$
-
-**Physical interpretation:**
-- Each phase should have unique feature signature
-- Minimizes ambiguity between phases
-- Better suited for non-overlapping phase boundaries
+* **NMF vs. K-Means:** Both are unsupervised clustering. NMF gives you richer information (soft assignments and phase definitions), while K-Means gives hard assignments. NMF is generally more interpretable.
+* **NMF vs. Deep Learning (U-Net):** Deep learning (like U-Net) is powerful but requires *a lot* of human-labeled examples (someone has to painstakingly draw outlines of all phases in many images). NMF doesn't need this, is more interpretable, and much lighter computationally. For this project, where labeled data is scarce and interpretability is key, NMF is a great choice.
 
 ---
 
-## **🎛️ PART 3: HYPERPARAMETER DEEP DIVE**
-
-### **3.1 n_components (k)**
-
-**Definition:** Number of components (phases) to extract
-
-**Theoretical significance:**
-- Latent dimensionality of the data
-- Trade-off between reconstruction error and model complexity
-
-**How to choose:**
-
-1. **Domain knowledge:**
-   - Steel typically has 2-5 phases
-   - OD_MetalDAM has 5 ground truth phases
-
-2. **Elbow method:**
-   - Plot reconstruction error vs k
-   - Look for "elbow" where error plateaus
-
-3. **Too small:**
-   - Underfitting: Different phases merged
-   - High reconstruction error
-
-4. **Too large:**
-   - Overfitting: Single phase split into multiple components
-   - Spurious components
-
-**In the code:**
-```python
-'n_components': 3,  # Default conservative
-PRESETS['fine_detail']: 4  # For complex microstructures
-```
-
----
-
-### **3.2 Sparsity (α_W, α_H)**
-
-**Definition:** L1 regularization strength
-
-**Effect on solution:**
-
-- **α = 0**: No sparsity constraint
-  - Dense representations
-  - All components contribute to all pixels
-  - Physically unrealistic
-
-- **α > 0**: Sparse solution
-  - Most W entries ≈ 0
-  - Each pixel dominated by few components
-  - **Physically accurate**: Pixel belongs to one phase
-
-**Mathematical effect:**
-$$\text{Soft thresholding: } W_{ij} \leftarrow \text{sign}(W_{ij})\max(|W_{ij}| - \alpha, 0)$$
-
-**In the code:**
-```python
-'default': alpha = 0.01      # Mild sparsity
-'high_sparsity': alpha = 0.15  # Strong sparsity
-```
-
-**Visualization of effect:**
-```
-α = 0.0:  W = [0.3, 0.3, 0.4]   ← All components active
-α = 0.1:  W = [0.05, 0.0, 0.95] ← Sparse, one dominant
-```
-
-**How to tune:**
-- Start low (0.01-0.05)
-- Increase if segmentation is "mushy"
-- Too high → empty components
-
----
-
-### **3.3 l1_ratio**
-
-**Definition:** Balance between L1 and L2 regularization
-
-$$R(W) = l1\_ratio \cdot ||W||_1 + (1 - l1\_ratio) \cdot ||W||_F^2$$
-
-**Values:**
-- **l1_ratio = 0**: Pure L2 (Ridge) → shrinks all coefficients equally
-- **l1_ratio = 0.5**: Elastic Net → balanced
-- **l1_ratio = 1**: Pure L1 (Lasso) → induces sparsity
-
-**The choice: 0.5**
-```python
-'l1_ratio': 0.5  # Equal mix
-```
-
-**Why 0.5?**
-- L1 provides sparsity (phase selectivity)
-- L2 provides smoothness (numerical stability)
-- Best of both worlds
-
----
-
-### **3.4 max_iter**
-
-**Definition:** Maximum iterations for optimization
-
-**Convergence behavior:**
-
-- **Too few:** Premature termination, suboptimal solution
-- **Sufficient:** Convergence to local minimum
-- **Too many:** Wasted computation (already converged)
-
-**Typical convergence:**
-```
-Iteration 50:  Error = 15.3
-Iteration 100: Error = 12.1
-Iteration 150: Error = 11.9  ← Near convergence
-Iteration 200: Error = 11.8  ← Converged
-```
-
-**The settings:**
-```python
-'max_iter': 300   # Default
-'max_iter': 400   # High sparsity (slower convergence)
-```
-
-**Why 300?**
-- Literature standard
-- CD solver converges faster than MU
-- Balances accuracy and speed
-
----
-
-### **3.5 solver: 'cd' vs 'mu'**
-
-**Coordinate Descent (CD):**
-- Updates one variable at a time
-- Uses exact line search
-- **Faster for sparse problems**
-- The choice in this project!
-
-**Multiplicative Update (MU):**
-- Updates all variables simultaneously
-- Classic Lee & Seung algorithm
-- More stable for dense problems
-
-**Performance comparison:**
-```
-CD:  100 iterations in 5.2s
-MU:  100 iterations in 3.8s
-
-CD:  Converges in 150 iterations
-MU:  Converges in 300 iterations
-
-Total time:
-CD:  7.8s
-MU: 11.4s
-```
-
-**Why CD:**
-- Sparsity constraints favor CD
-- Better convergence properties
-- Industry standard for large-scale NMF
-
----
-
-### **3.6 beta_loss: Frobenius vs KL**
-
-**Frobenius norm (β=2):**
-$$L_{Fro} = \sum_{ij} (V_{ij} - (WH)_{ij})^2$$
-
-- **Assumes:** Gaussian noise
-- **Sensitive to:** Outliers (squared error)
-- **Best for:** Natural images, SEM with uniform noise
-
-**Kullback-Leibler (β=1):**
-$$L_{KL} = \sum_{ij} V_{ij} \log\frac{V_{ij}}{(WH)_{ij}} - V_{ij} + (WH)_{ij}$$
-
-- **Assumes:** Poisson noise
-- **Robust to:** Multiplicative noise
-- **Best for:** Photon counting, fluorescence microscopy
-
-**The choice: Frobenius**
-- SEM images have additive noise
-- More interpretable as distance metric
-- Faster computation
-
----
-
-### **3.7 Tolerance (tol)**
-
-**Definition:** Convergence threshold
-
-**Convergence criterion:**
-$$\frac{||V - WH||_F^{(t)} - ||V - WH||_F^{(t-1)}}{||V||_F} < \text{tol}$$
-
-**The setting:**
-```python
-'tol': 1e-4  # 0.01% relative change
-```
-
-**Effect:**
-- **Too loose (1e-2)**: Early stopping, poor fit
-- **Appropriate (1e-4)**: Good fit, reasonable time
-- **Too tight (1e-8)**: Wasted computation, no visible improvement
-
----
-
-## **🖼️ PART 4: VISUALIZATION & INTERPRETATION**
-
-### **4.1 Colorized Segmentation**
-
-```python
-def colorize_segmentation(segmentation, n_components):
-    colors = plt.cm.tab10(np.linspace(0, 1, 10))[:n_components]
-```
-
-**Tab10 colormap:**
-- Categorical colors (qualitatively distinct)
-- Perceptually uniform
-- Colorblind-friendly
-
-**Interpretation:**
-- Each color = one phase
-- Spatial distribution shows microstructure
-- Can identify grain boundaries, precipitates, etc.
-
-### **4.2 Component Activation Maps**
-
-```python
-component_maps = [W_new[:, i].reshape(image.shape) for i in range(n_components)]
-```
-
-**Viridis colormap** (continuous):
-- Yellow = high activation
-- Blue = low activation
-
-**Reading component maps:**
-- **Bright regions** → Component strongly present
-- **Dark regions** → Component absent
-- **Gradual transitions** → Mixed/boundary regions
-
-**Metallurgical interpretation:**
-```
-Component 0 (high intensity, low texture):
-  → Matrix phase (ferrite)
-
-Component 1 (high gradient, medium intensity):
-  → Grain boundaries / Austenite
-
-Component 2 (high Laplacian, low blur):
-  → Precipitates / Carbides
-```
-
----
-
-## **⚙️ PART 5: PRACTICAL CONSIDERATIONS**
-
-### **5.1 Why Train on Multiple Images?**
-
-**Single image training:**
-- W: 262k × k (activations for that image)
-- H: k × 6 (phase definitions specific to that image)
-- Risk: Overfitting to that specific sample
-
-**Multi-image training (this project's approach):**
-- W: 2.6M × k (activations across 10 images)
-- H: k × 6 (SHARED phase definitions)
-- Benefit: Learns **generalizable** phase representations
-
-**Analogy:** Like training ML classifier on multiple samples rather than one.
-
-### **5.2 Computational Complexity**
-
-**NMF complexity per iteration:**
-$$O(mnk + mk^2 + nk^2)$$
-
-For this project's case (m=262k pixels, n=6 features, k=3):
-- Matrix multiplications dominate
-- CD: ~20ms per iteration
-- 300 iterations: ~6 seconds
-
-**Memory:**
-- X: 262k × 6 × 8 bytes = 12 MB
-- W: 262k × 3 × 8 bytes = 6 MB
-- H: 3 × 6 × 8 bytes = 144 bytes
-- Total: ~20 MB per image (very manageable)
-
-### **5.3 Failure Modes**
-
-**1. All pixels assigned to one component:**
-- **Cause:** Poor initialization, insufficient sparsity
-- **Fix:** Increase α, use random init, more iterations
-
-**2. Salt-and-pepper segmentation:**
-- **Cause:** Ignoring spatial structure
-- **Fix:** Use SpatiallyConstrainedNMF, post-process with morphological operations
-
-**3. Non-convergence:**
-- **Cause:** Ill-conditioned problem, conflicting constraints
-- **Fix:** Reduce sparsity, increase max_iter, try different init
-
-### **5.4 Validation Strategy**
-
-Since this is **unsupervised**, validation is qualitative:
-
-1. **Visual inspection:**
-   - Do segments correspond to visible phases?
-   - Are boundaries clean?
-
-2. **Reconstruction error:**
-   ```python
-   error = np.linalg.norm(X - W@H, 'fro')
-   ```
-   - Lower = better fit
-   - But beware overfitting!
-
-3. **Component interpretability:**
-   - Can you assign physical meaning to H matrix?
-   - Do components make metallurgical sense?
-
-4. **Stability:**
-   - Run multiple times with different seeds
-   - Stable solutions converge to similar segmentations
-
----
-
-## **📈 PART 6: COMPARISON WITH OTHER METHODS**
-
-### **6.1 NMF vs K-Means**
-
-| Aspect | NMF | K-Means |
-|--------|-----|---------|
-| **Input** | Non-negative matrices | Any features |
-| **Output** | Soft assignments (W) + basis (H) | Hard assignments |
-| **Interpretability** | High (parts-based) | Medium |
-| **Spatial info** | None (unless constrained) | None |
-| **Initialization** | Critical | Critical |
-| **Speed** | Slower | Faster |
-
-**When to use NMF over K-Means:**
-- Need interpretable components
-- Want probabilistic assignments
-- Data naturally non-negative
-
-### **6.2 NMF vs Deep Learning (U-Net)**
-
-| Aspect | NMF | U-Net |
-|--------|-----|-------|
-| **Training data** | Unsupervised | Requires labels |
-| **Parameters** | ~(m+n)k | Millions |
-| **Interpretability** | High | Black box |
-| **Speed (training)** | Seconds | Hours |
-| **Speed (inference)** | Fast | Very fast |
-| **Generalization** | Good if H is shared | Excellent with data |
-
-**Why NMF for this project:**
-- No labeled data needed!
-- Interpretable for scientific analysis
-- Lightweight, reproducible
-- Suitable for exploratory analysis
-
----
-
-## **🎓 INTERVIEW TALKING POINTS**
-
-### **Key Strengths to Emphasize:**
-
-1. **Mathematical rigor:**
-   - Solid understanding of optimization (Frobenius norm, L1 regularization)
-   - Know convergence properties and guarantees
-
-2. **Practical implementation:**
-   - Numerical stability (ε additions, normalization)
-   - Fallback strategies for degenerate cases
-   - Multiple model variants (spatial, orthogonal)
-
-3. **Domain knowledge:**
-   - Feature engineering specific to metallography
-   - CLAHE for SEM images
-   - Multi-scale analysis
-
-4. **Software engineering:**
-   - Modular design (utils/ separation)
-   - Configuration presets
-   - Batch processing pipeline
-   - Web UI for accessibility
-
-### **Potential Professor Questions & Answers:**
-
-**Q: Why non-negative constraints?**
-
-A: Physical interpretation - pixel intensities and phase contributions are inherently non-negative. NMF produces additive parts-based decomposition matching reality.
-
-**Q: Why this specific feature set?**
-
-A: Combines first-order (intensity), boundary (gradients, Laplacian), texture (variance), and multi-scale information. Captures different physical properties of metallurgical phases.
-
-**Q: How do you choose k?**
-
-A: Start with domain knowledge (expected phase count), validate with elbow plot, check component interpretability, and assess stability across runs.
-
-**Q: Limitations of NMF?**
-
-A: Local minima (non-convex), sensitive to initialization, ignores spatial structure (unless constrained), assumes linear mixing model.
-
-**Q: Why not use deep learning?**
-
-A: Requires labeled data (expensive in metallurgy), black-box nature, computationally intensive, NMF sufficient for this problem with interpretability benefits.
-
-**Q: How do you validate unsupervised segmentation?**
-
-A: Visual inspection by domain experts, reconstruction error, component interpretability, cross-validation with known samples, stability analysis.
-
-**Q: What happens if you increase sparsity too much?**
-
-A: Risk of degenerate solutions where some components become empty (all zeros). The balance is needed - enough sparsity for distinct phases but not so much that optimization fails.
-
-**Q: Why normalize features independently?**
-
-A: Different features have vastly different scales (intensity 0-1, gradients can be much larger). NMF is scale-sensitive, so normalization ensures each feature contributes equally to the decomposition.
-
-**Q: How does CLAHE improve segmentation quality?**
-
-A: By enhancing local contrast adaptively, CLAHE makes subtle phase boundaries more visible without amplifying noise globally. This leads to better gradient and Laplacian features, improving phase discrimination.
-
-**Q: What is the interpretability advantage of H matrix?**
-
-A: Each row of H represents a phase's "feature fingerprint" - showing which image characteristics (brightness, texture, edges) define that phase. This is directly interpretable by metallurgists unlike deep learning embeddings.
-
----
-
-## **📚 KEY PAPERS TO REFERENCE:**
-
-1. **Lee & Seung (1999)** - "Learning the parts of objects by non-negative matrix factorization" (Nature)
-   - Original NMF algorithm
-   - Established multiplicative update rules
-   - Demonstrated parts-based representation
-
-2. **Hoyer (2004)** - "Non-negative Matrix Factorization with Sparseness Constraints"
-   - Introduced explicit sparsity constraints
-   - Showed improved interpretability
-   - Provided theoretical analysis
-
-3. **Cichocki et al. (2009)** - "Fast Local Algorithms for Large Scale NMF"
-   - Efficient algorithms for large datasets
-   - Comparison of different solvers
-   - Practical implementation guidelines
-
-4. **Lin (2007)** - "Projected gradient methods for NMF"
-   - Introduced coordinate descent solver
-   - Proved convergence guarantees
-   - Showed faster convergence than MU
-
-5. **Févotte & Idier (2011)** - "Algorithms for Nonnegative Matrix Factorization with the β-Divergence"
-   - Beta-divergence framework
-   - Different noise models
-   - Application-specific loss functions
-
----
-
-## **🔧 TECHNICAL IMPLEMENTATION DETAILS**
-
-### **Code Organization:**
-
-```
-crystallography-project/
-├── microstructure_segmentation.py  # Main implementation
-│   └── MicrostructureSegmenter class
-│       ├── __init__(): Initialize model with parameters
-│       ├── train(): Fit NMF on training images
-│       ├── transform_features(): Project new images
-│       ├── segment(): Full segmentation pipeline
-│       └── batch_segment(): Process multiple images
-│
-├── utils/
-│   ├── preprocessing.py
-│   │   ├── load_and_preprocess_image(): Load & enhance
-│   │   └── extract_features(): Multi-scale features
-│   │
-│   ├── visualization.py
-│   │   ├── colorize_segmentation(): Apply colormap
-│   │   └── visualize_segmentation(): Create plots
-│   │
-│   └── advanced_models.py
-│       ├── SpatiallyConstrainedNMF: Spatial smoothness
-│       └── OrthogonalNMF: Orthogonality constraints
-│
-├── config.py                        # All hyperparameters
-├── load_dataset.py                  # Download OD_MetalDAM
-└── app.py                           # Gradio web interface
-```
-
-### **Data Flow:**
-
-```
-Raw Image (1280×895)
-    ↓ [load_and_preprocess_image]
-Preprocessed (512×512, grayscale, CLAHE)
-    ↓ [extract_features]
-Feature Matrix (262,144 × 6)
-    ↓ [NMF.fit_transform] (training)
-W (262,144 × k), H (k × 6)
-    ↓ [transform_features] (new image)
-W_new (262,144 × k)
-    ↓ [argmax normalization]
-Segmentation (512×512) with labels {0, ..., k-1}
-    ↓ [colorize_segmentation]
-RGB Visualization
-```
-
-### **Key Numerical Considerations:**
-
-1. **Strict Positivity:**
-   ```python
-   features = np.maximum(features, 1e-10)
-   ```
-   - NMF requires V > 0, not V ≥ 0
-   - Prevents division by zero
-   - Ensures log operations are defined
-
-2. **Normalization:**
-   ```python
-   H_norms = np.linalg.norm(self.H, axis=1, keepdims=True)
-   self.H = self.H / H_norms
-   ```
-   - Prevents scale ambiguity between W and H
-   - Since WH = (αW)(H/α), need constraint
-   - Standard: normalize H, let W absorb scale
-
-3. **Convergence Monitoring:**
-   ```python
-   error = np.linalg.norm(X - reconstruction, 'fro') / np.linalg.norm(X, 'fro')
-   ```
-   - Use relative error, not absolute
-   - Allows comparison across images
-   - Typical good convergence: error < 0.01
-
----
-
-## **🌟 PROJECT ACHIEVEMENTS**
-
-This project successfully demonstrates:
-
-1. **Theoretical Understanding:** Deep knowledge of NMF optimization, constraints, and convergence
-
-2. **Practical Implementation:** Robust code with numerical stability, error handling, and multiple variants
-
-3. **Domain Application:** Appropriate feature engineering and validation for metallurgical analysis
-
-4. **Reproducibility:** Configuration management, random seeds, deterministic initialization
-
-5. **Usability:** Clean API, batch processing, web interface, comprehensive documentation
-
-6. **Extensibility:** Modular design allows easy addition of new constraints, features, or models
-
----
-
-## **📊 EXPECTED RESULTS**
-
-### **Typical Segmentation Quality:**
-
-- **Reconstruction Error:** 10-15% relative Frobenius norm
-- **Component Coherence:** 80-90% of pixels have one dominant component (W_max > 0.7)
-- **Spatial Consistency:** <5% isolated pixels (salt-and-pepper)
-- **Phase Discrimination:** Distinct H matrix rows (cosine similarity < 0.3)
-
-### **Runtime Performance:**
-
-- **Training (10 images):** 8-12 seconds
-- **Inference (1 image):** 2-3 seconds
-- **Memory usage:** <100 MB
-- **Scalability:** Linear in number of images
-
----
-
-This project represents a complete, production-ready implementation of constrained NMF for materials science, combining theoretical rigor with practical engineering and domain expertise.
+This project is a fantastic example of using a powerful mathematical tool (NMF) to solve a real-world problem in materials science, all without needing expensive human-labeled data. It shows a strong grasp of both the theoretical underpinnings and practical implementation. Good luck!
