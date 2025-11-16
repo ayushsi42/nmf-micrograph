@@ -59,7 +59,7 @@ python test_setup.py
 pip install gradio  # if not already installed
 python app.py
 ```
-Access at http://localhost:7860 or http://YOUR_LOCAL_IP:7860
+Access at http://localhost:7861 or http://YOUR_LOCAL_IP:7861
 
 **3. Process dataset from command line:**
 ```bash
@@ -70,7 +70,29 @@ python microstructure_segmentation.py
 
 ### 🌐 Web UI (Recommended)
 
-## Usage
+**1. Install Gradio:**
+```bash
+pip install gradio
+# or run: bash install_ui.sh
+```
+
+**2. Launch the web interface:**
+```bash
+python app.py
+```
+
+**3. Access the UI:**
+- **Local:** http://localhost:7861
+- **Network:** http://YOUR_LOCAL_IP:7861 (accessible from other devices on your WiFi)
+- The app will automatically open in your browser
+
+**Features:**
+- Upload any micrograph image
+- Adjust number of components (phases)
+- Control sparsity for distinct phase separation
+- View segmentation and component activation maps with automatic phase naming
+- Color bar legend showing activation scale (blue = not present, yellow = present)
+- No coding required!
 
 ### 1. Load Dataset
 ```bash
@@ -110,15 +132,16 @@ python app.py
 ```
 
 **3. Access the UI:**
-- **Local:** http://localhost:7860
-- **Network:** http://YOUR_LOCAL_IP:7860 (accessible from other devices on your WiFi)
+- **Local:** http://localhost:7861
+- **Network:** http://YOUR_LOCAL_IP:7861 (accessible from other devices on your WiFi)
 - The app will automatically open in your browser
 
 **Features:**
 - Upload any micrograph image
 - Adjust number of components (phases)
 - Control sparsity for distinct phase separation
-- View segmentation and component activation maps
+- View segmentation and component activation maps with automatic phase naming
+- Color bar legend showing activation scale (blue = not present, yellow = present)
 - No coding required!
 
 ### 1. Load Dataset
@@ -242,6 +265,43 @@ After running, you'll get:
 - **Segmentation maps**: Color-coded phase assignments
 - **Component activation maps**: Individual phase distributions
 - **Quantitative metrics**: Reconstruction error, convergence
+
+## Understanding the Results
+
+### What Do the Colors Represent?
+
+The segmentation produces three types of visualizations:
+
+#### 1. **Segmentation Map** (Right side)
+- **What it shows**: Hard assignment - each pixel belongs to exactly one microstructural phase
+- **Colors**: Each color represents a different phase/component
+- **Example**: Red pixels = Phase 1, Blue pixels = Phase 2, etc.
+
+#### 2. **Component Activation Maps** (Bottom row)
+- **What it shows**: Soft assignment - how strongly each phase is present at each pixel
+- **Colors**: Heatmap from blue (low activation) to yellow (high activation)
+- **Why they look similar**: Different components can be active in different regions, but the spatial patterns may overlap
+- **Interpretation**: 
+  - Bright areas = high probability of that phase
+  - Dark areas = low probability of that phase
+  - Components are NOT mutually exclusive - a pixel can have high activation for multiple phases
+
+#### 3. **Phase Names**
+- Automatically assigned based on activation levels:
+  - **Defects/Voids**: Lowest activation areas (dark regions)
+  - **Precipitates**: Small, distinct features
+  - **Martensite**: Needle-like structures
+  - **Austenite**: Medium-contrast regions
+  - **Matrix**: Highest activation areas (bright background)
+
+### Example Interpretation
+If you see:
+- **Component 1** (Matrix): Bright in large, uniform areas
+- **Component 2** (Austenite): Bright in medium-contrast regions
+- **Component 3** (Defects): Bright in very dark spots
+
+This means the algorithm found three distinct microstructural patterns in your image!
+
 
 ## Tuning Guide
 

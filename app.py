@@ -16,6 +16,108 @@ from utils.visualization import colorize_segmentation, create_component_grid
 from config import PRESETS
 
 
+def create_colorbar_legend():
+    """
+    Create a color bar legend showing blue to yellow gradient.
+    
+    Returns:
+    --------
+    legend_image : np.ndarray
+        RGB image of the color bar with labels
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib as mpl
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(4, 0.5))
+    
+    # Create colorbar
+    cmap = mpl.cm.viridis
+    norm = mpl.colors.Normalize(vmin=0, vmax=1)
+    
+    # Create a horizontal colorbar
+    cbar = plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), 
+                       cax=ax, orientation='horizontal')
+    
+    # Remove ticks and labels
+    cbar.set_ticks([])
+    cbar.set_label('')
+    
+    # Add custom labels
+    ax.text(0.0, -0.5, 'Not Present', transform=ax.transAxes, 
+            ha='left', va='top', fontsize=10, fontweight='bold')
+    ax.text(1.0, -0.5, 'Present', transform=ax.transAxes, 
+            ha='right', va='top', fontsize=10, fontweight='bold')
+    
+    # Convert to image
+    fig.canvas.draw()
+    try:
+        # New matplotlib (>= 3.8)
+        buf = fig.canvas.buffer_rgba()
+        legend_image = np.asarray(buf)
+        legend_image = legend_image[:, :, :3]  # Remove alpha channel
+    except AttributeError:
+        try:
+            # Matplotlib 3.x
+            legend_image = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+            legend_image = legend_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        except AttributeError:
+            # Fallback for older matplotlib
+            legend_image = np.frombuffer(fig.canvas.tobytes(), dtype=np.uint8)
+            legend_image = legend_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    
+    plt.close(fig)
+    return legend_image
+
+
+def assign_phase_names(W_normalized, n_components):
+    """
+    Assign metallographic phase names to components based on their characteristics.
+    
+    Parameters:
+    -----------
+    W_normalized : np.ndarray
+        Normalized component activations (n_pixels, n_components)
+    n_components : int
+        Number of components
+        
+    Returns:
+    --------
+    list of str
+        Phase names for each component
+    """
+    # Calculate mean activation for each component
+    mean_activations = W_normalized.mean(axis=0)
+    
+    # Sort components by mean activation (lowest to highest)
+    sorted_indices = np.argsort(mean_activations)
+    
+    # Standard metallographic phases
+    phase_names = {
+        2: ["Defects/Voids", "Matrix"],
+        3: ["Defects/Voids", "Austenite", "Matrix"],
+        4: ["Defects/Voids", "Martensite", "Austenite", "Matrix"],
+        5: ["Defects/Voids", "Precipitates", "Martensite", "Austenite", "Matrix"]
+    }
+    
+    # Get appropriate phase names for n_components
+    if n_components in phase_names:
+        names = phase_names[n_components]
+    else:
+        # Fallback for other numbers
+        names = [f"Phase {i+1}" for i in range(n_components)]
+    
+    # Assign names based on sorted activation levels
+    component_names = [None] * n_components
+    for i, idx in enumerate(sorted_indices):
+        if i < len(names):
+            component_names[idx] = names[i]
+        else:
+            component_names[idx] = f"Phase {idx+1}"
+    
+    return component_names
+
+
 class MicrostructureSegmenterUI:
     """Wrapper class for the segmentation model with caching."""
     
@@ -83,7 +185,7 @@ class MicrostructureSegmenterUI:
         tuple : (original, segmentation, comp1, comp2, comp3, comp4)
         """
         if input_image is None:
-            return [None] * 6
+            return [None] * 10
         
         # Convert PIL to numpy if needed
         if isinstance(input_image, Image.Image):
@@ -111,7 +213,7 @@ class MicrostructureSegmenterUI:
             print(f"Training model with config: n_components={n_components}, sparsity={sparsity}, preset={preset}")
             success, message = self.train_model(n_components, sparsity, preset, solver, beta_loss, max_iter)
             if not success:
-                return [None] * 6
+                return [None] * 10
             self.last_config = current_config
         
         # Extract features and segment
@@ -120,16 +222,25 @@ class MicrostructureSegmenterUI:
         
         print(f"Feature matrix shape: {X.shape}, range: [{X.min():.6f}, {X.max():.6f}]")
         
-        # Use our custom transform method (more robust than sklearn's)
+        # Use sklearn's transform method for better stability
         print("Transforming features to component activations...")
-        W_new = self.model.transform_features(X, max_iter=200, verbose=True)
+        print(f"Model type: {type(self.model)}")
+        print(f"Internal model type: {type(self.model.model)}")
+        print(f"Has transform method: {hasattr(self.model.model, 'transform')}")
+        
+        try:
+            W_new = self.model.model.transform(X)
+            print(f"sklearn transform successful, W_new shape: {W_new.shape}")
+        except Exception as e:
+            print(f"sklearn transform failed: {e}, using manual transform")
+            W_new = self.model.transform_features(X, max_iter=200, verbose=True)
         
         print(f"W_new shape: {W_new.shape}, range: [{W_new.min():.6f}, {W_new.max():.6f}]")
         
         # Check if transformation is valid
         if W_new.max() < 1e-6 or np.std(W_new) < 1e-6:
             print("ERROR: Transform resulted in degenerate values!")
-            return [None] * 6
+            return [None] * 10
         
         # Normalize W_new for better visualization and segmentation
         # Softmax-like normalization ensures components are comparable
@@ -151,12 +262,15 @@ class MicrostructureSegmenterUI:
         
         if len(unique_labels) < 2:
             print("ERROR: Segmentation failed to find multiple components")
-            return [None] * 6
+            return [None] * 10
         
         # Check if any label dominates (>95% of pixels)
         max_dominance = counts.max() / counts.sum()
         if max_dominance > 0.95:
             print(f"WARNING: One component dominates {max_dominance*100:.1f}% of image")
+        
+        # Assign phase names based on component characteristics
+        component_names = assign_phase_names(W_normalized, n_components)
         
         component_maps = [W_normalized[:, i].reshape(image.shape) for i in range(n_components)]
         
@@ -166,30 +280,62 @@ class MicrostructureSegmenterUI:
         # Segmentation with color map
         seg_colored = colorize_segmentation(segmentation, n_components)
         
-        # Convert component maps to uint8 images (normalize to 0-255)
+        # Create component maps with better contrast and overlay information
         component_images = []
         for i, comp_map in enumerate(component_maps):
-            # Clip outliers for better visualization (use percentile normalization)
-            p_low = np.percentile(comp_map, 2)
-            p_high = np.percentile(comp_map, 98)
-            comp_clipped = np.clip(comp_map, p_low, p_high)
+            # Improve contrast – fall back to segmentation mask if nearly constant
+            comp_vis = comp_map.copy()
+            dynamic_range = comp_vis.max() - comp_vis.min()
+            if dynamic_range < 1e-5:
+                comp_vis = (segmentation == i).astype(np.float32)
             
-            # Normalize to 0-255
-            comp_normalized = (comp_clipped - comp_clipped.min()) / (comp_clipped.max() - comp_clipped.min() + 1e-10)
-            comp_uint8 = (comp_normalized * 255).astype(np.uint8)
+            # Clip outliers for better visualization (use percentile normalization)
+            p_low = np.percentile(comp_vis, 2)
+            p_high = np.percentile(comp_vis, 98)
+            if p_high - p_low < 1e-5:
+                p_low, p_high = comp_vis.min(), comp_vis.max()
+            comp_clipped = np.clip(comp_vis, p_low, p_high)
+            
+            # Normalize to 0-255 with stable scaling
+            comp_uint8 = cv2.normalize(comp_clipped, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+            comp_uint8 = comp_uint8.astype(np.uint8)
             
             # Apply colormap for better visualization
             comp_colored = cv2.applyColorMap(comp_uint8, cv2.COLORMAP_VIRIDIS)
             comp_colored = cv2.cvtColor(comp_colored, cv2.COLOR_BGR2RGB)
+            
+            # Add phase name overlay
+            phase_name = component_names[i] if i < len(component_names) else f"Phase {i+1}"
+            cv2.putText(comp_colored, phase_name, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                       0.8, (255, 255, 255), 2, cv2.LINE_AA)
+            
             component_images.append(comp_colored)
             
-            print(f"Component {i}: activation range [{comp_map.min():.4f}, {comp_map.max():.4f}], coverage: {(comp_map > 0.1).sum() / comp_map.size * 100:.1f}%")
+            print(f"Component {i} ({phase_name}): activation range [{comp_map.min():.4f}, {comp_map.max():.4f}], coverage: {(comp_map > 0.1).sum() / comp_map.size * 100:.1f}%")
         
-        # Pad with None for unused components (up to 4)
-        while len(component_images) < 4:
-            component_images.append(None)
+        # Ensure we always have 4 names for downstream updates
+        while len(component_names) < 4:
+            component_names.append("")
         
-        return original_vis, seg_colored, *component_images
+        # Build dynamic updates for component displays and names
+        component_image_updates = []
+        component_name_updates = []
+        for idx in range(4):
+            name = component_names[idx] if component_names[idx] else f"Phase {idx+1}"
+            if idx < len(component_images):
+                img = component_images[idx]
+                component_image_updates.append(gr.update(value=img, label=name))
+                component_name_updates.append(gr.update(value=name))
+            else:
+                component_image_updates.append(gr.update(value=None, label=name))
+                component_name_updates.append(gr.update(value=""))
+        
+        return (
+            original_vis,
+            seg_colored,
+            *component_image_updates,
+            *component_name_updates
+        )
     
 
 
@@ -212,16 +358,16 @@ def process_image(image, n_components, sparsity, target_size, preset, solver, be
         )
         
         if result[0] is None:
-            return [None] * 6  # Return None for all outputs
+            return [None] * 10  # Return None for all outputs (6 images + 4 names)
         
-        return result  # Returns: original, segmentation, comp1, comp2, comp3, comp4
+        return result  # Returns: original, segmentation, comp1, comp2, comp3, comp4, name1, name2, name3, name4
     
     except Exception as e:
         error_msg = f"Error: {str(e)}"
         print(error_msg)
         import traceback
         traceback.print_exc()
-        return [None] * 6
+        return [None] * 10
 
 
 # Create Gradio interface
@@ -234,6 +380,19 @@ with gr.Blocks(title="Microstructure Segmentation") as demo:
         Non-negative Matrix Factorization with sparsity constraints.
         
         **Model automatically trains on sample images from the `images/` directory on first use.**
+        
+        ## Understanding the Results
+        
+        ### 🎨 What Do the Colors Represent?
+        
+        **Segmentation Map** (right): Each color shows which microstructural phase "wins" at each pixel location.
+        
+        **Component Maps** (bottom): Heatmaps showing how strongly each phase is present at each location:
+        - 🔵 **Blue** = Low activation (phase not present)
+        - 🟡 **Yellow** = High activation (phase strongly present)
+        - Components are NOT mutually exclusive - pixels can belong to multiple phases!
+        
+        **Phase Names**: Automatically identified based on activation patterns (Defects, Austenite, Matrix, etc.)
         """
     )
     
@@ -323,13 +482,30 @@ with gr.Blocks(title="Microstructure Segmentation") as demo:
             gr.Markdown("### Individual Component Activations")
             gr.Markdown("*Each component represents a different microstructural phase*")
             
-            with gr.Row():
-                component1_out = gr.Image(label="Component 1", height=250)
-                component2_out = gr.Image(label="Component 2", height=250)
+            # Add color bar legend
+            colorbar_legend = gr.Image(
+                value=create_colorbar_legend(),
+                label="Activation Scale",
+                height=50,
+                show_label=False
+            )
+            gr.Markdown("**🔵 Blue = Not Present** | **🟡 Yellow = Present**")
             
             with gr.Row():
-                component3_out = gr.Image(label="Component 3", height=250)
-                component4_out = gr.Image(label="Component 4", height=250)
+                component1_name = gr.Textbox(label="Phase 1 Name", interactive=False)
+                component2_name = gr.Textbox(label="Phase 2 Name", interactive=False)
+            
+            with gr.Row():
+                component3_name = gr.Textbox(label="Phase 3 Name", interactive=False)
+                component4_name = gr.Textbox(label="Phase 4 Name", interactive=False)
+            
+            with gr.Row():
+                component1_out = gr.Image(label="Phase 1", height=250)
+                component2_out = gr.Image(label="Phase 2", height=250)
+            
+            with gr.Row():
+                component3_out = gr.Image(label="Phase 3", height=250)
+                component4_out = gr.Image(label="Phase 4", height=250)
     
     # Examples
     gr.Markdown("### Example Images")
@@ -340,7 +516,8 @@ with gr.Blocks(title="Microstructure Segmentation") as demo:
             ["images/image_2.jpg", 4, 0.05, 512, 'fine_detail', 'cd', 'frobenius', 350],
         ],
         inputs=[input_image, n_components, sparsity, target_size, preset, solver, beta_loss, max_iter],
-        outputs=[original_out, segmentation_out, component1_out, component2_out, component3_out, component4_out],
+        outputs=[original_out, segmentation_out, component1_out, component2_out, component3_out, component4_out,
+                component1_name, component2_name, component3_name, component4_name],
         fn=process_image,
         cache_examples=False,
     )
@@ -349,7 +526,8 @@ with gr.Blocks(title="Microstructure Segmentation") as demo:
     segment_btn.click(
         fn=process_image,
         inputs=[input_image, n_components, sparsity, target_size, preset, solver, beta_loss, max_iter],
-        outputs=[original_out, segmentation_out, component1_out, component2_out, component3_out, component4_out]
+        outputs=[original_out, segmentation_out, component1_out, component2_out, component3_out, component4_out, 
+                component1_name, component2_name, component3_name, component4_name]
     )
     
     gr.Markdown(
@@ -366,6 +544,8 @@ with gr.Blocks(title="Microstructure Segmentation") as demo:
         - **Default**: Balanced, no sparsity (general purpose)
         - **High Sparsity**: Strong regularization (distinct phases)
         - **Fine Detail**: Moderate sparsity (subtle features)
+        
+        **💡 Pro Tip:** If components look too similar, try increasing sparsity or using the 'High Sparsity' preset for more distinct phase separation!
         """
     )
 
@@ -374,7 +554,7 @@ if __name__ == "__main__":
     # Launch with network sharing enabled
     demo.launch(
         server_name="0.0.0.0",  # Listen on all network interfaces
-        server_port=7860,
+        server_port=7861,  # Changed port to avoid conflicts
         share=True,  # Set to True for public Gradio link
         inbrowser=True  # Auto-open in browser
     )

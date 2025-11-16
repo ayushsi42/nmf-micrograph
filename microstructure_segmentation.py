@@ -94,6 +94,71 @@ class MicrostructureSegmenter:
         self.kwargs = kwargs
         
         self._initialize_model()
+        
+    def _clone_model(self, **overrides):
+        """Create a new sklearn NMF object with optional overrides."""
+        params = dict(
+            n_components=self.n_components,
+            init=self.model.init,
+            solver=self.model.solver,
+            beta_loss=self.beta_loss,
+            max_iter=self.max_iter,
+            tol=self.tol,
+            random_state=42,
+            alpha_W=self.alpha_W,
+            alpha_H=self.alpha_H,
+            l1_ratio=self.l1_ratio
+        )
+        params.update(overrides)
+        return NMF(**params)
+    
+    @staticmethod
+    def _components_valid(W: np.ndarray, H: np.ndarray, min_coverage: float = 0.005) -> bool:
+        """Check that every component has meaningful coverage and energy."""
+        if W is None or H is None:
+            return False
+        if np.any(np.isnan(W)) or np.any(np.isnan(H)):
+            return False
+        if np.min(H.sum(axis=1)) < 1e-8:
+            return False
+        coverage = (W > 1e-5).sum(axis=0) / W.shape[0]
+        return np.all(coverage > min_coverage)
+    
+    def _fit_with_retries(self, X_train: np.ndarray, verbose: bool = True):
+        """Attempt to fit NMF model with multiple inits/solvers for stability."""
+        init_candidates = ['nndsvda', 'random']
+        solver_candidates = [self.solver, 'mu']
+        for attempt in range(3):
+            init_choice = init_candidates[min(attempt, len(init_candidates)-1)]
+            solver_choice = solver_candidates[min(attempt, len(solver_candidates)-1)]
+            alpha_scale = max(0.3 ** attempt, 0.05)
+            max_iter = max(self.max_iter, 400) if self.n_components >= 4 else self.max_iter + attempt * 100
+            if verbose:
+                print(f"Attempt {attempt+1}: init={init_choice}, solver={solver_choice}, alpha_scale={alpha_scale:.3f}, max_iter={max_iter}")
+            model = self._clone_model(
+                init=init_choice,
+                solver=solver_choice,
+                alpha_W=self.alpha_W * alpha_scale,
+                alpha_H=self.alpha_H * alpha_scale,
+                max_iter=max_iter
+            )
+            try:
+                W = model.fit_transform(X_train)
+                H = model.components_
+            except Exception as exc:
+                if verbose:
+                    print(f"  Fit failed with error: {exc}")
+                continue
+            if self._components_valid(W, H):
+                self.model = model
+                self.W = W
+                self.H = H
+                if verbose:
+                    print(f"  Fit successful. Coverage per component: {(W > 1e-5).sum(axis=0) / W.shape[0]}")
+                return True
+            if verbose:
+                print("  Components collapsed; retrying with relaxed regularization...")
+        return False
     
     def _initialize_model(self):
         """Initialize the appropriate NMF model based on model_type."""
@@ -176,30 +241,17 @@ class MicrostructureSegmenter:
         
         # Fit model
         if self.model_type == 'standard':
-            self.W = self.model.fit_transform(X_train)
-            self.H = self.model.components_
+            success = self._fit_with_retries(X_train, verbose=verbose)
+            if not success:
+                raise RuntimeError("Failed to train a stable NMF model after multiple attempts")
             
             # Check convergence
-            n_iter = self.model.n_iter_
+            n_iter = getattr(self.model, 'n_iter_', self.model.max_iter)
             if verbose:
-                print(f"NMF converged in {n_iter} iterations (max: {self.max_iter})")
+                print(f"NMF converged in {n_iter} iterations (max: {self.model.max_iter})")
                 print(f"W range: [{self.W.min():.6f}, {self.W.max():.6f}]")
                 print(f"H range: [{self.H.min():.6f}, {self.H.max():.6f}]")
             
-            # Ensure W and H are not degenerate
-            if np.all(self.W < 1e-10):
-                if verbose:
-                    print("ERROR: W matrix is all zeros! Reinitializing...")
-                # Reinitialize with random init
-                self.model.init = 'random'
-                self.W = self.model.fit_transform(X_train)
-                self.H = self.model.components_
-                
-            if np.all(self.H < 1e-10):
-                if verbose:
-                    print("Warning: H matrix near zero, adding noise")
-                self.H += 1e-8 * np.random.rand(*self.H.shape)
-                
             # Normalize H to have unit norm columns for better numerical stability
             H_norms = np.linalg.norm(self.H, axis=1, keepdims=True) + 1e-10
             self.H = self.H / H_norms
